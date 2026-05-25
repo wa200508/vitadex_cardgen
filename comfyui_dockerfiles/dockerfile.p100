@@ -1,0 +1,51 @@
+# ==============================================================================
+# 1. BASE IMAGE: Set up CUDA 12.6 and shared dependencies
+# ==============================================================================
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04 AS base
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip and install torch matching CUDA 12.6
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# ==============================================================================
+# 2. COMFYUI STAGE: Clone repo
+# ==============================================================================
+FROM base AS comfyui-build
+WORKDIR /app
+# Clone ComfyUI repository
+RUN git clone https://github.com/comfyanonymous/ComfyUI.git .
+
+# ==============================================================================
+# 3. FINAL IMAGE
+# ==============================================================================
+FROM base AS final
+
+# Copy ComfyUI codebase from the build stage
+COPY --from=comfyui-build /app /app/ComfyUI
+
+# Set working directory to where main.py and requirements.txt live
+WORKDIR /app/ComfyUI
+
+# Install ALL ComfyUI packages + missing database dependencies in the final runtime layer
+RUN pip3 install --no-cache-dir -r requirements.txt && \
+    pip3 install --no-cache-dir sqlalchemy blake3 alembic PyYAML tqdm
+
+# Expose the default ComfyUI port
+EXPOSE 8188
+
+# Default entrypoint for standalone setup
+ENTRYPOINT ["python3", "main.py", "--listen", "0.0.0.0"]
